@@ -177,7 +177,7 @@ void flipAppleImg3RootExtra(AppleImg3RootExtra* extra) {
 	FLIPENDIANLE(extra->name);
 }
 
-flipAppleImg3KBAGHeader(AppleImg3KBAGHeader* data) {
+void flipAppleImg3KBAGHeader(AppleImg3KBAGHeader* data) {
 	FLIPENDIANLE(data->key_modifier);
 	FLIPENDIANLE(data->key_bits);
 }
@@ -261,12 +261,17 @@ void closeImg3(AbstractFile* file) {
 	free(file);
 }
 
-void setKeyImg3(AbstractFile2* file, const unsigned int* key, const unsigned int* iv) {
+void setKeyImg3(AbstractFile2* file,
+		const unsigned int* key,
+		const unsigned int* iv)
+{
 	Img3Info* info = (Img3Info*) file->super.data;
 
 	int i;
 	uint8_t bKey[32];
 	int keyBits = ((AppleImg3KBAGHeader*)info->kbag->data)->key_bits;
+	unsigned char *decrypted_data = NULL;
+	size_t padded_size;
 
 	for(i = 0; i < 16; i++) {
 		info->iv[i] = iv[i] & 0xff;
@@ -279,10 +284,32 @@ void setKeyImg3(AbstractFile2* file, const unsigned int* key, const unsigned int
 	AES_set_encrypt_key(bKey, keyBits, &(info->encryptKey));
 	AES_set_decrypt_key(bKey, keyBits, &(info->decryptKey));
 
-	if(!info->encrypted) {
+	/* 
+	 * skip descryption if malloc fails us, restore info->data->data to
+	 * point to its original buffer
+	 */
+	if (!info->encrypted) {
 		uint8_t ivec[16];
+
+		/* account for padded bytes */
+		padded_size = info->data->header->size - IMG3_TAG_SIZE;
+
+		decrypted_data = (unsigned char *) malloc(padded_size);
+		if (decrypted_data == NULL)
+			return;
+
+		bzero((void *) decrypted_data, padded_size);
+
 		memcpy(ivec, info->iv, 16);
-                AES_cbc_encrypt(info->data->data, info->data->data, ((info->data->header->size - sizeof(AppleImg3Header)) / 16) * 16, &(info->decryptKey), ivec, AES_DECRYPT);
+                AES_cbc_encrypt(info->data->data,
+				decrypted_data,
+				padded_size,
+				&(info->decryptKey),
+				ivec,
+				AES_DECRYPT);
+		
+		free(info->data->data);
+		info->data->data = decrypted_data;
 	}
 
 	info->encrypted = TRUE;
@@ -461,6 +488,7 @@ Img3Element* readImg3Element(AbstractFile* file) {
 	Img3Element* toReturn;
 	AppleImg3Header* header;
 	off_t curPos;
+	uint32_t padded_size;
 
 	curPos = file->tell(file);
 
@@ -473,23 +501,34 @@ Img3Element* readImg3Element(AbstractFile* file) {
 	toReturn->next = NULL;
 
 	switch(header->magic) {
-		case IMG3_MAGIC:
-			readImg3Root(file, toReturn);
-			break;
+	case IMG3_MAGIC:
+		readImg3Root(file, toReturn);
+		break;
 
-		case IMG3_KBAG_MAGIC:
-			toReturn->data = (unsigned char*) malloc(header->dataSize);
-			toReturn->write = writeImg3KBAG;
-			toReturn->free = freeImg3Default;
-			file->read(file, toReturn->data, header->dataSize);
-			flipAppleImg3KBAGHeader((AppleImg3KBAGHeader*) toReturn->data);
-			break;
-
-		default:
-			toReturn->data = (unsigned char*) malloc(header->dataSize);
-			toReturn->write = writeImg3Default;
-			toReturn->free = freeImg3Default;
-			file->read(file, toReturn->data, header->dataSize);
+	case IMG3_KBAG_MAGIC:
+		toReturn->data = (unsigned char*) malloc(header->dataSize);
+		toReturn->write = writeImg3KBAG;
+		toReturn->free = freeImg3Default;
+		file->read(file, toReturn->data, header->dataSize);
+		flipAppleImg3KBAGHeader((AppleImg3KBAGHeader*) toReturn->data);
+		break;
+			
+	case IMG3_DATA_MAGIC:
+		/*
+		 * make sure pad bytes are copied in, needed for decryption
+		 */
+		padded_size = header->size - IMG3_TAG_SIZE;
+		toReturn->data = (unsigned char *) malloc(padded_size);
+		toReturn->write = writeImg3Default;
+		toReturn->free = freeImg3Default;
+		file->read(file, toReturn->data, padded_size);
+		break;
+							  
+	default:
+		toReturn->data = (unsigned char*) malloc(header->dataSize);
+		toReturn->write = writeImg3Default;
+		toReturn->free = freeImg3Default;
+		file->read(file, toReturn->data, header->dataSize);
 	}
 
 	file->seek(file, curPos + toReturn->header->size);

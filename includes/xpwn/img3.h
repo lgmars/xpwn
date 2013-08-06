@@ -20,6 +20,8 @@
 
 #define IMG3_SIGNATURE IMG3_MAGIC
 
+#define IMG3_TAG_SIZE 12
+
 typedef struct Img3Element Img3Element;
 typedef struct Img3Info Img3Info;
 

@@ -14,10 +14,14 @@ void flipCompHeader(CompHeader* header) {
 	FLIPENDIAN(header->length_compressed);
 }
 
-size_t readComp(AbstractFile* file, void* data, size_t len) {
+size_t readComp(AbstractFile* file, void* data, size_t len)
+{
 	InfoComp* info = (InfoComp*) (file->data); 
-	memcpy(data, (void*)((uint8_t*)info->buffer + (uint32_t)info->offset), len);
+	memcpy(data,
+	       (void*)((uint8_t*)info->buffer + (uint32_t)info->offset),
+	       len);
 	info->offset += (size_t)len;
+
 	return len;
 }
 
@@ -83,6 +87,7 @@ AbstractFile* createAbstractFileFromComp(AbstractFile* file) {
 	InfoComp* info;
 	AbstractFile* toReturn;
 	uint8_t *compressed;
+	uint32_t real_uncompressed;
 
 	if(!file) {
 		return NULL;
@@ -107,8 +112,10 @@ AbstractFile* createAbstractFileFromComp(AbstractFile* file) {
 	compressed = malloc(info->header.length_compressed);
 	file->read(file, compressed, info->header.length_compressed);
 
-	uint32_t real_uncompressed = decompress_lzss(info->buffer, compressed, info->header.length_compressed);
-	if(real_uncompressed != info->header.length_uncompressed) {
+	real_uncompressed = decompress_lzss(info->buffer,
+					    compressed,
+					    info->header.length_compressed);
+	if (real_uncompressed != info->header.length_uncompressed) {
 		XLOG(5, "mismatch: %d %d %d %x %x\n", info->header.length_compressed, real_uncompressed, info->header.length_uncompressed, compressed[info->header.length_compressed - 2], compressed[info->header.length_compressed - 1]);
 		free(compressed);
 		free(info);
